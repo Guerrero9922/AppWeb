@@ -1,0 +1,84 @@
+---
+- hosts: all
+  remote_user: edgar
+  become: true
+  vars_files:
+    - group_vars/default.yml
+
+  tasks:
+    - name: Instalacion de prerequisitos
+      apt: name={{ item }} update_cache=yes state=latest force_apt_get=yes
+      loop: [ 'aptitude' ]
+
+  #Apache Configuracion
+    - name: Instalacion de paquetes necesarios
+      apt: name={{ item }} update_cache=yes state=latest
+      loop: [ 'apache2', 'mysql-server', 'python3-pymysql', 'php', 'php-mysql', 'libapache2-mod-php' ]
+
+    - name: Creacion de documento root
+      file:
+        path: "/var/www/{{ http_host }}"
+        state: directory
+        owner: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Poner Apache virtualhost
+      template:
+        src: "files/apache.conf.j2"
+        dest: "/etc/apache2/sites-available/{{ http_conf }}"
+      notify: Reload Apache2
+
+    - name: Activar nuevo sitio
+      shell: /usr/sbin/a2ensite {{ http_conf }}
+      notify: Reload Apache2
+
+    - name: Descativar default Apache sitio
+      shell: /usr/sbin/a2dissite 000-default.conf
+      when: disable_default
+      notify: Reload Apache2
+
+ # MySQL Configuracion
+    - name: Poner root password
+      mysql_user:
+        name: user
+        password: "{{ mysql_root_password }}"
+        login_unix_socket: /var/run/mysqld/mysqld.sock
+
+    - name: Remover cuentas anonimas
+      mysql_user:
+        name: ''
+        host_all: yes
+        state: absent
+        login_user: user
+        login_password: "{{ mysql_root_password }}"
+
+    - name: Remover MySQL prueba database
+      mysql_db:
+        name: test
+        state: absent
+        login_user: user
+        login_password: "{{ mysql_root_password }}"
+
+  # UFW Configuracion
+    - name: "UFW - Permitir HTTP en puerto {{ http_port }}"
+      ufw:
+        rule: allow
+        port: "{{ http_port }}"
+        proto: tcp
+
+  # Php informacion o pagina web
+    - name: Sets Up PHP Info Page
+      template:
+        src: "files/info.php.j2"
+        dest: "/var/www/{{ http_host }}/info.php"
+
+  handlers:
+    - name: Reload Apache2
+      service:
+        name: apache2
+        state: reloaded
+
+    - name: Restart Apache2
+      service:
+        name: apache2
+        state: restarted
